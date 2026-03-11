@@ -27,19 +27,21 @@ cargo build --release
 
 # Move to your bin directory
 sudo cp target/release/pqsum /usr/local/bin/
+```
 
-Quick Start
+## Quick Start
 Generate a new post-quantum keypair:
 
-Bash
+```bash
 pqsum --keygen --algo ML-DSA-65 --out keys/
 Sign a file (generates a release.tar.gz.pq signature file):
-
-Bash
+```
+```bash
 pqsum --sign release.tar.gz --key keys/private.key 
 Verify a file:
-
-Bash
+```
+```bash
 pqsum --verify release.tar.gz --sig release.tar.gz.pq --pub keys/public.key
-Contributing
+```
+## Contributing 
 Contributions are welcome! Please check the issues page for "good first issue" tags, particularly around supporting additional NIST candidate algorithms and cross-platform compilation.
