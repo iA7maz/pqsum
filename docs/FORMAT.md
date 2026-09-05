@@ -172,8 +172,10 @@ Fingerprint: 5b56d2c8...
 ```
 
 * The first line must be exactly `# pqsum manifest v1`.
-* `# algorithm:` and `# digest:` are required. `# key:` is the signer's short
-  id and is informational.
+* `# algorithm:`, `# digest:` and `# key:` are all required. `# key:` is the
+  signer's short id (see §2). It is part of the signed body and a verifier
+  must compare it against the public key it was given, reporting a mismatch as
+  "signed by a different key" rather than as a malformed file.
 * Entry lines are `<hex digest>` then **two spaces** then the path — the same
   shape `sha256sum` produces.
 * Paths are relative to the directory containing the manifest.
@@ -189,13 +191,19 @@ where `body` is the exact bytes of everything above the `-----BEGIN` line.
 ### Canonical form
 
 After parsing a manifest, a verifier **must** re-render the body from the
-parsed entries and require it to equal the bytes on disk, before or alongside
-checking the signature.
+parsed fields and require it to equal the bytes on disk, before checking the
+signature.
 
 This closes the gap between a lenient parser and the strict signed encoding.
 Without it, a parser that tolerated (say) extra whitespace would accept a body
 that is not the one that was signed, and the difference between "what the
 signature covers" and "what a human reads" becomes exploitable.
+
+Every value used in that re-render must come from the file, never from the
+verifier's inputs. In particular the signer id is the one parsed out of
+`# key:`, not the short id of whichever public key was supplied — otherwise
+presenting the wrong key makes an intact manifest look malformed, and the
+error blames the file instead of the key.
 
 ### Path escaping
 

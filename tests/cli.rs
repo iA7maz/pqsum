@@ -425,6 +425,30 @@ fn an_edited_manifest_is_rejected_before_any_file_is_checked() {
 }
 
 #[test]
+fn checking_a_manifest_with_the_wrong_key_says_so() {
+    let sandbox = Sandbox::new();
+    let (private, _) = sandbox.keygen_with("ML-DSA-44", "mine");
+    let (_, stranger) = sandbox.keygen_with("ML-DSA-44", "theirs");
+    sandbox.write("dist/one.bin", b"one");
+    sandbox
+        .pqsum()
+        .args(["--sign", "dist", "-r", "--manifest", "dist/PQSUMS", "--key"])
+        .arg(&private)
+        .assert()
+        .success();
+
+    let assert = sandbox
+        .pqsum()
+        .args(["--check", "dist/PQSUMS", "--pub"])
+        .arg(&stranger)
+        .assert();
+    assert_eq!(code(&assert), REJECTED);
+    assert.stdout(predicate::str::contains(
+        "FAILED (signed by a different key)",
+    ));
+}
+
+#[test]
 fn a_manifest_that_is_not_a_manifest_is_an_error() {
     // Distinct from the case above: here the file cannot be understood at
     // all, so pqsum could not carry out the check rather than having carried

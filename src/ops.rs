@@ -233,12 +233,12 @@ pub fn check_manifest(
     let text = fs::read_to_string(manifest_path).map_err(|e| Error::io(manifest_path, e))?;
     let manifest = match Manifest::open(&text, &public_key, manifest_path) {
         Ok(manifest) => manifest,
-        // The manifest parsed but its signature does not check out: the list
-        // of files is not authentic. That is a rejection (status 1), not an
-        // inability to check (status 2), and it is reported in the same shape
-        // as any other rejected artefact.
-        Err(Error::Verification(_)) => {
-            reporter.failed(manifest_path, "signature is invalid");
+        // The manifest is well formed but not authentic: wrong key, wrong
+        // algorithm, or a signature that does not check out. That is a
+        // rejection (status 1), not an inability to check (status 2), and it
+        // is reported in the same shape as any other rejected artefact.
+        Err(Error::Rejected(reason)) => {
+            reporter.failed(manifest_path, reason);
             reporter.summary(1, 1);
             return Err(Error::Verification(1));
         }

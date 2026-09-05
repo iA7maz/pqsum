@@ -35,6 +35,9 @@ pub enum Error {
     Backend(String),
     /// The command line did not make sense.
     Usage(String),
+    /// A single artefact was well formed but not authentic. The caller turns
+    /// this into a `FAILED (reason)` line and a `Verification` exit status.
+    Rejected(crate::sigfile::Reason),
     /// At least one file failed verification. Carries the failure count.
     Verification(usize),
 }
@@ -58,7 +61,7 @@ impl Error {
     /// The process exit status this error should produce.
     pub fn exit_code(&self) -> i32 {
         match self {
-            Error::Verification(_) => 1,
+            Error::Verification(_) | Error::Rejected(_) => 1,
             _ => 2,
         }
     }
@@ -76,6 +79,7 @@ impl fmt::Display for Error {
                 f,
                 "algorithm '{name}' is not available in this build of liboqs (try --list-algos)"
             ),
+            Error::Rejected(reason) => write!(f, "{reason}"),
             Error::Malformed { path, reason } => write!(f, "{}: {}", path.display(), reason),
             Error::Mismatch {
                 what,

@@ -45,11 +45,16 @@ pub struct Entry {
 }
 
 /// A manifest, signed or not yet signed.
+///
+/// The signer is held as the rendered short id rather than raw fingerprint
+/// bytes, because that string is part of the signed body: when reading a
+/// manifest back it must come from the file, not from whichever key the
+/// verifier happened to supply.
 #[derive(Debug, Clone)]
 pub struct Manifest {
     pub algorithm: &'static AlgoInfo,
     pub hash: HashAlg,
-    pub key_fingerprint: [u8; 32],
+    pub key_id: String,
     pub entries: Vec<Entry>,
 }
 
@@ -65,10 +70,7 @@ impl Manifest {
         out.push('\n');
         out.push_str(&format!("# algorithm: {}\n", self.algorithm.name));
         out.push_str(&format!("# digest: {}\n", self.hash.name()));
-        out.push_str(&format!(
-            "# key: {}\n",
-            short_fingerprint(&self.key_fingerprint)
-        ));
+        out.push_str(&format!("# key: {}\n", self.key_id));
         for entry in &self.entries {
             out.push_str(&format!(
                 "{}  {}\n",
@@ -104,10 +106,11 @@ impl Manifest {
             }
         }
 
+        let key_fingerprint = fingerprint(&key.public);
         let manifest = Manifest {
             algorithm: key.algorithm,
             hash,
-            key_fingerprint: fingerprint(&key.public),
+            key_id: short_fingerprint(&key_fingerprint),
             entries,
         };
 
@@ -122,7 +125,7 @@ impl Manifest {
             armor::MANIFEST_SIGNATURE_LABEL,
             &[
                 ("Algorithm", key.algorithm.name.to_string()),
-                ("Fingerprint", hex::encode(manifest.key_fingerprint)),
+                ("Fingerprint", hex::encode(key_fingerprint)),
             ],
             signature.as_ref(),
         ));
@@ -144,25 +147,20 @@ impl Manifest {
         let body = &text[..body_len];
 
         let parsed = parse_body(body, path)?;
-        if parsed.algorithm.name != public_key.algorithm.name {
-            return Err(Error::Mismatch {
-                what: "algorithm",
-                expected: parsed.algorithm.name.to_string(),
-                found: public_key.algorithm.name.to_string(),
-            });
-        }
 
         let manifest = Manifest {
             algorithm: parsed.algorithm,
             hash: parsed.hash,
-            key_fingerprint: public_key.fingerprint(),
+            key_id: parsed.key_id,
             entries: parsed.entries,
         };
 
-        // Re-render the body from the parsed entries and require it to match
-        // the bytes on disk. This closes the gap between the lenient parser
-        // and the strict signed encoding: anything the parser accepted but
-        // would not itself produce is rejected here.
+        // Re-render the body from what was parsed and require it to match the
+        // bytes on disk. This closes the gap between the lenient parser and
+        // the strict signed encoding: anything the parser accepted but would
+        // not itself produce is rejected here. Note that everything compared
+        // comes from the file, so supplying the wrong public key cannot make
+        // an intact manifest look malformed.
         if manifest.body() != body {
             return Err(Error::malformed(
                 path,
@@ -170,23 +168,37 @@ impl Manifest {
             ));
         }
 
+        // Now the manifest is known to be well formed, so any remaining
+        // problem is about authenticity, and is reported the same way a
+        // detached signature would report it.
+        if manifest.algorithm.name != public_key.algorithm.name {
+            return Err(Error::Rejected(Reason::AlgorithmMismatch {
+                signature: manifest.algorithm.name,
+                key: public_key.algorithm.name,
+            }));
+        }
+        if manifest.key_id != short_fingerprint(&public_key.fingerprint()) {
+            return Err(Error::Rejected(Reason::WrongKey));
+        }
+
         let scheme = algo::scheme(manifest.algorithm)?;
         let signature = scheme
             .signature_from_bytes(&block.payload)
-            .ok_or_else(|| Error::malformed(path, "signature block has the wrong length"))?;
+            .ok_or(Error::Rejected(Reason::BadSignature))?;
         let key = scheme
             .public_key_from_bytes(&public_key.bytes)
             .ok_or_else(|| Error::Backend("public key has the wrong length".into()))?;
 
         match scheme.verify(&manifest.signed_message(), signature, key) {
             Ok(()) => Ok(VerifiedManifest(manifest)),
-            Err(_) => Err(Error::Verification(1)),
+            Err(_) => Err(Error::Rejected(Reason::BadSignature)),
         }
     }
 }
 
 /// A manifest whose signature has been checked. Only this type exposes the
 /// entry list, so a caller cannot act on unverified contents by accident.
+#[derive(Debug)]
 pub struct VerifiedManifest(Manifest);
 
 impl VerifiedManifest {
@@ -215,12 +227,14 @@ impl VerifiedManifest {
 struct ParsedBody {
     algorithm: &'static AlgoInfo,
     hash: HashAlg,
+    key_id: String,
     entries: Vec<Entry>,
 }
 
 fn parse_body(body: &str, path: &Path) -> Result<ParsedBody> {
     let mut algorithm_name = None;
     let mut hash_name = None;
+    let mut key_id = None;
     let mut entries = Vec::new();
     let mut seen_version = false;
 
@@ -237,6 +251,8 @@ fn parse_body(body: &str, path: &Path) -> Result<ParsedBody> {
                 algorithm_name = Some(value.trim().to_string());
             } else if let Some(value) = comment.strip_prefix("digest:") {
                 hash_name = Some(value.trim().to_string());
+            } else if let Some(value) = comment.strip_prefix("key:") {
+                key_id = Some(value.trim().to_string());
             }
             continue;
         }
@@ -263,6 +279,8 @@ fn parse_body(body: &str, path: &Path) -> Result<ParsedBody> {
         .ok_or_else(|| Error::malformed(path, "manifest does not name a signature algorithm"))?;
     let hash_name = hash_name
         .ok_or_else(|| Error::malformed(path, "manifest does not name a digest algorithm"))?;
+    let key_id =
+        key_id.ok_or_else(|| Error::malformed(path, "manifest does not name a signing key"))?;
 
     let hash = HashAlg::parse_from_file(&hash_name, path)?;
     for entry in &entries {
@@ -280,6 +298,7 @@ fn parse_body(body: &str, path: &Path) -> Result<ParsedBody> {
     Ok(ParsedBody {
         algorithm: algo::lookup_from_file(&algorithm_name, path)?,
         hash,
+        key_id,
         entries,
     })
 }
@@ -408,7 +427,15 @@ mod tests {
         let signer = key();
         let stranger = key();
         let text = Manifest::create(&signer, HashAlg::Sha3_512, entries()).unwrap();
-        assert!(Manifest::open(&text, &stranger.public_key(), p()).is_err());
+
+        // The manifest is intact; only the key is wrong. Saying so beats
+        // reporting it as a malformed file, which is what a verifier that
+        // rendered the signer id from the supplied key would end up doing.
+        let err = Manifest::open(&text, &stranger.public_key(), p()).unwrap_err();
+        assert!(
+            matches!(err, Error::Rejected(Reason::WrongKey)),
+            "unexpected error: {err}"
+        );
     }
 
     #[test]
