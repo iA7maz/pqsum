@@ -1,0 +1,38 @@
+[package]
+name = "pqsum"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.85"
+description = "Post-quantum cryptographic file verification utility"
+authors = ["pqsum contributors"]
+license = "GPL-3.0-or-later"
+repository = "https://github.com/iA7maz/pqsum"
+readme = "README.md"
+keywords = ["post-quantum", "cryptography", "ml-dsa", "signature", "checksum"]
+categories = ["command-line-utilities", "cryptography"]
+exclude = ["/.github", "/docs", "/Dockerfile", "/.dockerignore"]
+
+[dependencies]
+# liboqs bindings. Default features are disabled so we do not build the KEM
+# families (we never use them) or link against OpenSSL; that keeps the liboqs
+# build shorter and the resulting binary free of a system OpenSSL dependency.
+oqs = { version = "0.11", default-features = false, features = ["std", "ml_dsa", "sphincs", "falcon"] }
+
+clap = { version = "4.5", features = ["derive", "wrap_help"] }
+sha3 = "0.10"
+sha2 = "0.10"
+base64 = "0.22"
+hex = "0.4"
+zeroize = { version = "1.8", features = ["derive"] }
+
+[dev-dependencies]
+assert_cmd = "2.0"
+predicates = "3.1"
+tempfile = "3.10"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+panic = "abort"
+strip = false
