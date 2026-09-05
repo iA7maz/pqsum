@@ -11,7 +11,16 @@
 # actually runs and produces the documented output.
 set -euo pipefail
 
-PQSUM="${1:-pqsum}"
+# The test runs in a temporary directory, so resolve the binary to an absolute
+# path first: a relative one like target/release/pqsum stops working the
+# moment we cd away from the repository.
+PQSUM="$(command -v -- "${1:-pqsum}" || true)"
+if [ -z "$PQSUM" ]; then
+    echo "pqsum: no such binary: ${1:-pqsum}" >&2
+    exit 2
+fi
+PQSUM="$(cd "$(dirname -- "$PQSUM")" && pwd)/$(basename -- "$PQSUM")"
+
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 

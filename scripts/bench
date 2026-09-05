@@ -9,7 +9,15 @@
 # VmHWM) so the script needs nothing beyond a normal Linux userland.
 set -euo pipefail
 
-PQSUM="${1:-pqsum}"
+# Resolved to an absolute path before we cd into the work directory, so a
+# relative argument such as target/release/pqsum keeps working.
+PQSUM="$(command -v -- "${1:-pqsum}" || true)"
+if [ -z "$PQSUM" ]; then
+    echo "pqsum: no such binary: ${1:-pqsum}" >&2
+    exit 2
+fi
+PQSUM="$(cd "$(dirname -- "$PQSUM")" && pwd)/$(basename -- "$PQSUM")"
+
 SIZES_MIB="${2:-1 64 512 2048}"
 
 WORK="$(mktemp -d)"
