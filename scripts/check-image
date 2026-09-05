@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+#
+# Build the runtime container image and prove it works end to end.
+#
+#   scripts/check-image [tag]
+#
+# This is the check that matters for anyone who runs pqsum from a container
+# rather than installing it: the image must sign and verify files on a bind
+# mount, run as a non-root user, and leave the host's files owned by the host.
+set -euo pipefail
+
+TAG="${1:-pqsum:latest}"
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+WORK="$(mktemp -d)"
+trap 'rm -rf "$WORK"' EXIT
+
+step() { printf '\n\033[1m== %s\033[0m\n' "$*"; }
+
+step "build $TAG"
+docker build -t "$TAG" "$REPO_ROOT"
+
+# Bind mounts keep host ownership, so run as the host user to avoid writing
+# root-owned files into whatever directory the user pointed at.
+run() { docker run --rm --user "$(id -u):$(id -g)" -v "$WORK:/data" "$TAG" "$@"; }
+
+step "image metadata"
+docker image inspect "$TAG" \
+    --format 'size: {{.Size}} bytes
+entrypoint: {{.Config.Entrypoint}}
+user: {{.Config.User}}'
+
+step "the default command is the help text"
+docker run --rm "$TAG" | head -3
+
+step "sign and verify through a bind mount"
+echo 'release payload' > "$WORK/release.tar.gz"
+run --keygen --out keys/
+run --sign release.tar.gz --key keys/private.key
+run --verify release.tar.gz --pub keys/public.key
+
+step "a tampered file is rejected inside the container too"
+echo 'tampered' > "$WORK/release.tar.gz"
+status=0
+run --verify release.tar.gz --pub keys/public.key --status || status=$?
+[ "$status" -eq 1 ] || { echo "expected exit 1, got $status" >&2; exit 1; }
+echo "rejected with exit status 1"
+
+step "host files are owned by the host user, not root"
+ls -l "$WORK" "$WORK/keys"
+if find "$WORK" ! -user "$(id -u)" -print -quit | grep -q .; then
+    echo "FAIL: the container left files owned by another user" >&2
+    exit 1
+fi
+
+step "the binary is self-contained apart from libc"
+docker run --rm --entrypoint sh "$TAG" -c 'ldd /usr/local/bin/pqsum'
+
+printf '\n\033[32mcontainer image checks passed\033[0m\n'

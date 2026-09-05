@@ -1,0 +1,49 @@
+#!/usr/bin/env bash
+#
+# Run a command inside the pqsum development container.
+#
+#   scripts/dev cargo build
+#   scripts/dev cargo test
+#   scripts/dev cargo clippy --all-targets -- -D warnings
+#   scripts/dev bash                      # interactive shell
+#
+# Everything the build produces lives in Docker volumes rather than the source
+# tree, and the container runs as the invoking user, so a checkout never ends
+# up with root-owned files in it. Nothing is installed on the host beyond the
+# image itself.
+set -euo pipefail
+
+IMAGE="${PQSUM_DEV_IMAGE:-pqsum-dev}"
+CARGO_VOLUME="${PQSUM_CARGO_VOLUME:-pqsum-cargo}"
+TARGET_VOLUME="${PQSUM_TARGET_VOLUME:-pqsum-target}"
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+if ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
+    echo "pqsum: building $IMAGE (first run only, this takes a few minutes)" >&2
+    docker build --target dev -t "$IMAGE" "$REPO_ROOT"
+fi
+
+# Named volumes are created root-owned; hand them to the invoking user once.
+for volume in "$CARGO_VOLUME" "$TARGET_VOLUME"; do
+    if ! docker volume inspect "$volume" >/dev/null 2>&1; then
+        docker volume create "$volume" >/dev/null
+        docker run --rm \
+            -v "$volume:/vol" \
+            "$IMAGE" chown -R "$(id -u):$(id -g)" /vol
+    fi
+done
+
+tty_flags=()
+if [ -t 0 ] && [ -t 1 ]; then
+    tty_flags=(-it)
+fi
+
+exec docker run --rm "${tty_flags[@]}" \
+    --user "$(id -u):$(id -g)" \
+    -v "$REPO_ROOT:/work" \
+    -v "$CARGO_VOLUME:/cargo" \
+    -v "$TARGET_VOLUME:/build" \
+    -e CARGO_HOME=/cargo \
+    -e CARGO_TARGET_DIR=/build \
+    -w /work \
+    "$IMAGE" "${@:-bash}"

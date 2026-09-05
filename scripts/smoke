@@ -1,0 +1,91 @@
+#!/usr/bin/env bash
+#
+# End-to-end smoke test against a real pqsum binary.
+#
+#   scripts/smoke                 # uses pqsum from PATH
+#   scripts/smoke /build/debug/pqsum
+#   scripts/dev scripts/smoke     # inside the dev container
+#
+# The Rust test suite covers behaviour in detail; this exists to prove that a
+# built artefact — a release binary, or the one inside the container image —
+# actually runs and produces the documented output.
+set -euo pipefail
+
+PQSUM="${1:-pqsum}"
+WORK="$(mktemp -d)"
+trap 'rm -rf "$WORK"' EXIT
+
+step() { printf '\n\033[1m== %s\033[0m\n' "$*"; }
+fail() { printf '\033[31mFAIL: %s\033[0m\n' "$*" >&2; exit 1; }
+
+cd "$WORK"
+
+step "version"
+"$PQSUM" --version
+
+step "list available algorithms"
+"$PQSUM" --list-algos
+
+step "generate a keypair"
+"$PQSUM" --keygen --algo ML-DSA-65 --out keys/
+ls -l keys/
+head -4 keys/public.key
+
+step "sign a 32 MiB file"
+head -c 33554432 /dev/urandom > release.tar.gz
+time "$PQSUM" --sign release.tar.gz --key keys/private.key
+ls -l release.tar.gz.pq
+
+step "inspect the signature"
+"$PQSUM" --info release.tar.gz.pq
+
+step "verify it"
+"$PQSUM" --verify release.tar.gz --sig release.tar.gz.pq --pub keys/public.key
+
+step "a modified file must be rejected"
+printf 'X' | dd of=release.tar.gz bs=1 seek=1000 conv=notrunc status=none
+if "$PQSUM" --verify release.tar.gz --pub keys/public.key; then
+    fail "a tampered file verified"
+fi
+status=0
+"$PQSUM" --verify release.tar.gz --pub keys/public.key --status || status=$?
+[ "$status" -eq 1 ] || fail "expected exit status 1 for a bad signature, got $status"
+echo "rejected with exit status 1, as documented"
+
+step "a stranger's key must be rejected"
+"$PQSUM" --keygen --out other/ --algo ML-DSA-65
+head -c 1024 /dev/urandom > payload.bin
+"$PQSUM" --sign payload.bin --key keys/private.key
+if "$PQSUM" --verify payload.bin --pub other/public.key; then
+    fail "a signature verified against the wrong key"
+fi
+
+step "sign a directory into one manifest"
+mkdir -p dist/nested
+head -c 4096 /dev/urandom > dist/a.bin
+head -c 4096 /dev/urandom > dist/nested/b.bin
+"$PQSUM" --sign dist/ --recursive --key keys/private.key --manifest dist/PQSUMS
+cat dist/PQSUMS | head -8
+
+step "check the manifest"
+"$PQSUM" --check dist/PQSUMS --pub keys/public.key
+
+step "an edited manifest entry must be rejected"
+printf 'X' | dd of=dist/a.bin bs=1 seek=0 conv=notrunc status=none
+if "$PQSUM" --check dist/PQSUMS --pub keys/public.key; then
+    fail "a modified file passed the manifest check"
+fi
+
+step "a missing file must be reported, not skipped"
+rm dist/nested/b.bin
+if "$PQSUM" --check dist/PQSUMS --pub keys/public.key; then
+    fail "a missing file passed the manifest check"
+fi
+
+step "SLH-DSA works too"
+"$PQSUM" --keygen --algo SLH-DSA-SHA2-128f --out slh/
+echo hello > note.txt
+"$PQSUM" --sign note.txt --key slh/private.key
+"$PQSUM" --verify note.txt --pub slh/public.key
+
+printf '\n\033[32mall smoke checks passed\033[0m\n'

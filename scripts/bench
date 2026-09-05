@@ -1,0 +1,63 @@
+#!/usr/bin/env bash
+#
+# Measure signing and verification throughput, and show that memory use does
+# not grow with file size — the claim the streaming design exists to support.
+#
+#   scripts/dev scripts/bench /build/release/pqsum
+#
+# Peak memory is read from the kernel's own high-water mark (/proc/PID/status
+# VmHWM) so the script needs nothing beyond a normal Linux userland.
+set -euo pipefail
+
+PQSUM="${1:-pqsum}"
+SIZES_MIB="${2:-1 64 512 2048}"
+
+WORK="$(mktemp -d)"
+trap 'rm -rf "$WORK"' EXIT
+cd "$WORK"
+
+"$PQSUM" --keygen --out . --status
+
+# Run a command, printing elapsed seconds and its peak resident memory in MiB.
+measure() {
+    local start peak=0 pid line
+    start=$(date +%s%N)
+    "$@" &
+    pid=$!
+    while kill -0 "$pid" 2>/dev/null; do
+        line=$(grep '^VmHWM:' "/proc/$pid/status" 2>/dev/null || true)
+        [ -n "$line" ] && peak=$(echo "$line" | awk '{print $2}')
+    done
+    wait "$pid"
+    local end
+    end=$(date +%s%N)
+    awk -v ns="$((end - start))" -v kb="$peak" \
+        'BEGIN { printf "%.2f %.1f", ns/1e9, kb/1024 }'
+}
+
+printf '%-10s  %-18s  %-18s  %s\n' SIZE SIGN VERIFY 'PEAK RSS'
+for mb in $SIZES_MIB; do
+    head -c "$((mb * 1024 * 1024))" /dev/zero > blob.bin
+
+    read -r sign_secs sign_rss <<<"$(measure "$PQSUM" --sign blob.bin --key private.key --force --status)"
+    read -r verify_secs _ <<<"$(measure "$PQSUM" --verify blob.bin --pub public.key --status)"
+
+    printf '%-10s  %-18s  %-18s  %s\n' \
+        "${mb} MiB" \
+        "$(awk -v s="$sign_secs" -v m="$mb" 'BEGIN { printf "%.2fs (%d MiB/s)", s, (s > 0 ? m/s : 0) }')" \
+        "$(awk -v s="$verify_secs" -v m="$mb" 'BEGIN { printf "%.2fs (%d MiB/s)", s, (s > 0 ? m/s : 0) }')" \
+        "$(awk -v r="$sign_rss" 'BEGIN { printf "%.1f MiB", r }')"
+done
+
+# A hard cap on address space is the blunt version of the same claim: if any
+# part of the pipeline read the file into memory, this would fail.
+echo
+echo "signing the ${mb} MiB file again under a 128 MiB address-space limit:"
+if ( ulimit -v 131072 && "$PQSUM" --sign blob.bin --key private.key --force --status ); then
+    echo "  ok - memory use is bounded by the read buffer, not the file size"
+else
+    echo "  FAILED - memory use scales with file size" >&2
+    exit 1
+fi
+
+rm -f blob.bin
