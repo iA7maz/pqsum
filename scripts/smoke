@@ -74,7 +74,9 @@ mkdir -p dist/nested
 head -c 4096 /dev/urandom > dist/a.bin
 head -c 4096 /dev/urandom > dist/nested/b.bin
 "$PQSUM" --sign dist/ --recursive --key keys/private.key --manifest dist/PQSUMS
-cat dist/PQSUMS | head -8
+# head reads the file directly; piping cat into it would give cat EPIPE once
+# head closed the pipe, which `set -o pipefail` turns into a failed run.
+head -8 dist/PQSUMS
 
 step "check the manifest"
 "$PQSUM" --check dist/PQSUMS --pub keys/public.key

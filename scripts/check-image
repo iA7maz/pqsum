@@ -30,7 +30,12 @@ entrypoint: {{.Config.Entrypoint}}
 user: {{.Config.User}}'
 
 step "the default command is the help text"
-docker run --rm "$TAG" | head -3
+# Captured rather than piped straight into head: under `set -o pipefail`, head
+# closing the pipe early gives the writer EPIPE and fails the whole script.
+# Whether it notices before finishing is a race, so piping here made CI fail
+# intermittently. Command substitution drains the output completely.
+help_text="$(docker run --rm "$TAG")"
+printf '%s\n' "$help_text" | head -3
 
 step "sign and verify through a bind mount"
 echo 'release payload' > "$WORK/release.tar.gz"
@@ -47,8 +52,10 @@ echo "rejected with exit status 1"
 
 step "host files are owned by the host user, not root"
 ls -l "$WORK" "$WORK/keys"
-if find "$WORK" ! -user "$(id -u)" -print -quit | grep -q .; then
-    echo "FAIL: the container left files owned by another user" >&2
+# Same reasoning as above: `grep -q` would close the pipe on its first match.
+foreign="$(find "$WORK" ! -user "$(id -u)" -print -quit)"
+if [ -n "$foreign" ]; then
+    echo "FAIL: the container left files owned by another user: $foreign" >&2
     exit 1
 fi
 
