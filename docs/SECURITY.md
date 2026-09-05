@@ -37,6 +37,46 @@ maintainer publishing a release, and a user checking it.
 ML-DSA and SLH-DSA are the NIST standards for this (FIPS 204 and FIPS 205).
 Both are believed secure against classical and quantum adversaries.
 
+### Why a classical hash is not a weak link
+
+pqsum hashes with SHA3-512, which is not itself a "post-quantum algorithm".
+That is not an inconsistency: hash functions were never the part quantum
+computers break.
+
+* **Shor's algorithm** applies to problems with hidden periodic structure —
+  integer factorisation and discrete logarithms. It reduces RSA, DSA, ECDSA
+  and Ed25519 from infeasible to routine. There is no analogous structure in
+  a hash function for it to exploit.
+* **Grover's algorithm** does apply, but yields only a quadratic speedup: a
+  2^n search becomes 2^(n/2).
+
+For SHA3-512 that gives:
+
+| Property | Classical | With Grover |
+| -------- | --------- | ----------- |
+| Preimage resistance | 2^512 | 2^256 |
+| Collision resistance | 2^256 (birthday bound) | ~2^256 in practice |
+
+The quantum collision algorithms that beat the birthday bound (BHT and
+relatives) require quantum memory on the order of the search space, which is
+why NIST does not credit them with a practical advantage, and why its position
+is that doubling an output length is a sufficient response to Grover. SHA3-512
+is already well past that threshold; the weakest link in a pqsum signature is
+therefore the signature scheme, not the digest.
+
+This is also why `--hash SHA-256` is offered but not the default. It remains
+secure against known quantum attack, but its 128-bit collision resistance
+gives less margin than the signature algorithms it would sit underneath, and
+in a hash-then-sign construction the digest's collision resistance is a
+security parameter: an adversary who finds a collision can move a valid
+signature onto a different file.
+
+The strongest illustration that hashes are not the problem is FIPS 205 itself.
+SLH-DSA is built entirely out of hash functions, with no number-theoretic or
+lattice assumption anywhere in it. It is the conservative post-quantum choice
+*because* its security reduces to hash properties, which quantum computers do
+not meaningfully erode.
+
 ## What pqsum does not do
 
 **It does not distribute keys.** This is the hard part of any signing system
