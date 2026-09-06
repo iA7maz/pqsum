@@ -8,6 +8,32 @@ before anything that creates users.** pqsum has no adoption yet, which makes
 now the cheapest moment in the project's life to break a format. That window
 closes the day a GitHub Action or a crates.io release ships.
 
+### If only five things get done
+
+Encrypted private keys (1.5) · numeric identifiers / format v2 (1.2) ·
+crates.io and a properly built release (Phase 3) · the GitHub Action
+(Phase 3) · fuzzing (2.2).
+
+That list deliberately no longer includes switching to HashML-DSA, which
+community review turned into "do not do this" — see 1.3 and 1.4.
+
+---
+
+## Already done
+
+Recorded so they are not mistaken for outstanding work.
+
+* **stdin signing and `--out`.** `pqsum --sign - --out FILE.pq` works and is
+  covered by an end-to-end test.
+* **A tagged `v0.1.0` release** with an x86_64 binary attached. Static, musl
+  and aarch64 builds, and signing it with a real release key, are still open —
+  see Phase 3.
+* **liboqs is pinned**, via `oqs-sys 0.11.0+liboqs-0.13.0` in `Cargo.lock`.
+  What remains is documenting which version, not doing the pinning.
+* **First outside review**, on the Open Quantum Safe discussions. It settled
+  four questions; a second review from a different audience is still worth
+  having — see 2.6.
+
 ---
 
 ## Phase 1 — settle the formats
@@ -133,6 +159,22 @@ Do this *after* format v2 lands.
 In `SECURITY.md`: attacker capabilities as rows (replace the file, replace file
 and key, steal the laptop, compromise CI, own a quantum computer in 2040)
 against what pqsum does and does not stop.
+
+### 2.6 A second outside review, on the construction itself
+
+The Open Quantum Safe thread reviewed how pqsum *uses* liboqs, and was worth
+it. It is not the same as having the signed-message construction examined by
+people who do nothing but analyse constructions.
+
+Ask on Cryptography Stack Exchange or the NIST **pqc-forum** specifically
+about the canonical framing — the length-prefixed encoding of
+`(algorithm, digest algorithm, digest)`, the domain separation between
+detached signatures, manifests and fingerprints, and whether signing a digest
+under a scheme with no standardised pre-hash introduces anything the framing
+does not already cover.
+
+Worth doing after format v2 lands, so the thing being reviewed is the thing
+that will ship. The replies become a `FORMAT.md` section either way.
 
 ---
 
