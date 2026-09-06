@@ -214,6 +214,7 @@ It is version 0.1.0. The formats are specified and tested, but private keys are 
 * [docs/USAGE.md](docs/USAGE.md) — every option, with examples
 * [docs/FORMAT.md](docs/FORMAT.md) — the on-disk formats, specified well enough to write another implementation
 * [docs/SECURITY.md](docs/SECURITY.md) — threat model: what pqsum does and does not protect you from
+* [docs/ROADMAP.md](docs/ROADMAP.md) — what is planned next, and what community review has already settled
 * [CONTRIBUTING.md](CONTRIBUTING.md) — how to build, test and hack on it
 
 ## Contributing
